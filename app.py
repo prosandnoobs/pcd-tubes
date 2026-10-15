@@ -134,7 +134,7 @@ section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button {
     padding: 0.8rem 1rem;
     text-align: center;
 }
-.stat-num { font-size: 1.6rem; font-weight: 700; color: #ffffff; }
+.stat-num { font-size: clamp(0.95rem, 1.6vw, 1.6rem); font-weight: 700; color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stat-label { font-size: 0.75rem; color: #777777; margin-top: 2px; }
 
 div.stButton > button {
@@ -187,6 +187,19 @@ footer { visibility: hidden; }
 
 
 # HELPER FUNCTIONS
+
+MAX_SIDE = 2000  # sisi terpanjang maksimum agar proses cepat & hemat memori
+
+
+def downscale(img: np.ndarray, max_side: int = MAX_SIDE) -> np.ndarray:
+    """Perkecil citra besar dengan rasio aspek tetap."""
+    h, w = img.shape[:2]
+    scale = max_side / max(h, w)
+    if scale >= 1:
+        return img
+    size = (max(1, round(w * scale)), max(1, round(h * scale)))
+    return np.array(Image.fromarray(img).resize(size, Image.LANCZOS))
+
 
 def load_image(uploaded) -> np.ndarray:
     """
@@ -452,7 +465,9 @@ if uploaded_file is None:
         </div>
         """, unsafe_allow_html=True)
 else:
-    image_np = load_image(uploaded_file)
+    original_np = load_image(uploaded_file)
+    orig_h, orig_w = original_np.shape[:2]
+    image_np = downscale(original_np)
     is_gray = image_np.ndim == 2
     img_h, img_w = image_np.shape[:2]
 
@@ -462,6 +477,10 @@ else:
     if st.session_state.get("settings_key") != settings_key:
         st.session_state.pop("result", None)
         st.session_state["settings_key"] = settings_key
+
+    if image_np.shape[:2] != (orig_h, orig_w):
+        st.info(f"Gambar {orig_w}x{orig_h} diperkecil menjadi {img_w}x{img_h} "
+                f"(rasio tetap) agar proses lebih cepat.")
 
     # Stats row
     c1, c2, c3, c4 = st.columns(4)
