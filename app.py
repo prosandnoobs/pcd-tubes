@@ -13,8 +13,7 @@ Features:
 import streamlit as st
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
-import os, random, shutil, tempfile
-import imageio.v3 as imageio
+import io, random, zipfile
 
 # PAGE CONFIG
 st.set_page_config(
@@ -189,74 +188,106 @@ footer { visibility: hidden; }
 
 # HELPER FUNCTIONS
 
-def create_jigsaw_mask(h_step, w_step, row, col, M, tab_map_h, tab_map_v, jigsaw_radius_ratio=0.18):
+def load_image(uploaded) -> np.ndarray:
     """
-    Build a boolean mask (h_step x w_step) with circular tab/blank connectors
+    Read the uploaded file and normalise it to uint8 RGB (H,W,3) or Grayscale (H,W).
+    Handles palette (P), RGBA/LA (alpha dropped), CMYK and 16-bit images.
+    """
+    pil = Image.open(uploaded)
+    pil.load()
+    if pil.mode in ("L", "1"):
+        pil = pil.convert("L")
+    elif pil.mode in ("I", "I;16", "I;16B", "I;16L", "F"):
+        arr = np.asarray(pil, dtype=np.float64)
+        rng = arr.max() - arr.min()
+        arr = (arr - arr.min()) / rng * 255 if rng > 0 else np.zeros_like(arr)
+        pil = Image.fromarray(arr.astype(np.uint8), "L")
+    elif pil.mode == "LA":
+        pil = pil.convert("L")
+    else:
+        pil = pil.convert("RGB")
+    return np.array(pil)
+
+
+def compute_bounds(length: int, M: int) -> list:
+    """Batas potongan sepanjang satu sumbu; sisa piksel dibagi rata sehingga seluruh citra tercakup."""
+    return [round(i * length / M) for i in range(M + 1)]
+
+
+def create_jigsaw_mask(ph, pw, row, col, M, tab_map_h, tab_map_v, radius):
+    """
+    Build a boolean mask (ph+2*pad x pw+2*pad) with circular tab/blank connectors
     on each of the 4 edges, creating a true jigsaw silhouette.
     tab_map_h[i,j] = +1 means bottom edge of row-i piece at col-j has a TAB protruding down.
     tab_map_v[i,j] = +1 means right edge of row-i piece at col-j has a TAB protruding right.
     """
-    radius = int(min(h_step, w_step) * jigsaw_radius_ratio)
     pad = radius + 2
-    H_pad = h_step + 2 * pad
-    W_pad = w_step + 2 * pad
+    H_pad = ph + 2 * pad
+    W_pad = pw + 2 * pad
 
     mask = np.zeros((H_pad, W_pad), dtype=bool)
-    mask[pad:pad+h_step, pad:pad+w_step] = True
+    mask[pad:pad+ph, pad:pad+pw] = True
 
     Y, X = np.ogrid[:H_pad, :W_pad]
 
     def add_circle(cy, cx, add: bool):
-        dist2 = (Y - cy)**2 + (X - cx)**2
-        if add:
-            mask[dist2 <= radius**2] = True
-        else:
-            mask[dist2 <= radius**2] = False
+        mask[(Y - cy)**2 + (X - cx)**2 <= radius**2] = add
 
     if row > 0:
-        add_circle(pad, pad + w_step // 2, tab_map_h[row-1, col] == -1)
+        add_circle(pad, pad + pw // 2, tab_map_h[row-1, col] == -1)
     if row < M - 1:
-        add_circle(pad + h_step, pad + w_step // 2, tab_map_h[row, col] == 1)
+        add_circle(pad + ph, pad + pw // 2, tab_map_h[row, col] == 1)
     if col > 0:
-        add_circle(pad + h_step // 2, pad, tab_map_v[row, col-1] == -1)
+        add_circle(pad + ph // 2, pad, tab_map_v[row, col-1] == -1)
     if col < M - 1:
-        add_circle(pad + h_step // 2, pad + w_step, tab_map_v[row, col] == 1)
+        add_circle(pad + ph // 2, pad + pw, tab_map_v[row, col] == 1)
 
     return mask, pad
 
 
-def draw_number_on_piece(rgba_img: np.ndarray, number: int) -> np.ndarray:
-    """Overlay a piece number on the piece image."""
-    pil = Image.fromarray(rgba_img, "RGBA")
-    draw = ImageDraw.Draw(pil)
-    font_size = max(12, min(pil.width, pil.height) // 5)
+def get_font(size: int):
+    """Font scalable yang tersedia di Windows maupun Linux (Streamlit Cloud)."""
+    for name in ("arial.ttf", "DejaVuSans-Bold.ttf", "DejaVuSans.ttf"):
+        try:
+            return ImageFont.truetype(name, size)
+        except Exception:
+            pass
     try:
-        font = ImageFont.truetype("arial.ttf", font_size)
-    except Exception:
-        font = ImageFont.load_default()
-    draw.text((6, 6), str(number), fill=(0, 0, 0, 180), font=font)
-    draw.text((4, 4), str(number), fill=(255, 255, 255, 230), font=font)
-    return np.array(pil)
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
-def augment_piece(rgb_patch: np.ndarray) -> np.ndarray:
+def draw_number_on_piece(img: Image.Image, number: int, offset: int) -> Image.Image:
+    """Overlay a piece number on the piece image (inside the core area)."""
+    draw = ImageDraw.Draw(img)
+    font_size = max(12, min(img.width, img.height) // 5)
+    font = get_font(font_size)
+    x = y = offset + 4
+    if img.mode == "LA":
+        draw.text((x + 2, y + 2), str(number), fill=(0, 180), font=font)
+        draw.text((x, y), str(number), fill=(255, 230), font=font)
+    else:
+        draw.text((x + 2, y + 2), str(number), fill=(0, 0, 0, 180), font=font)
+        draw.text((x, y), str(number), fill=(255, 255, 255, 230), font=font)
+    return img
+
+
+def augment_piece(patch: np.ndarray) -> np.ndarray:
     """Apply random brightness & contrast augmentation to a piece."""
-    pil = Image.fromarray(rgb_patch)
+    pil = Image.fromarray(patch)
     pil = ImageEnhance.Brightness(pil).enhance(random.uniform(0.8, 1.2))
     pil = ImageEnhance.Contrast(pil).enhance(random.uniform(0.8, 1.2))
     return np.array(pil)
 
 
-def rotate_rgba(rgba: np.ndarray, angle: int) -> np.ndarray:
-    """Rotate RGBA image by angle degrees (0/90/180/270)."""
-    pil = Image.fromarray(rgba, "RGBA")
-    if angle == 90:
-        pil = pil.transpose(Image.ROTATE_90)
-    elif angle == 180:
-        pil = pil.transpose(Image.ROTATE_180)
-    elif angle == 270:
-        pil = pil.transpose(Image.ROTATE_270)
-    return np.array(pil)
+ROTATIONS = {90: Image.ROTATE_90, 180: Image.ROTATE_180, 270: Image.ROTATE_270}
+
+
+def to_png_bytes(img: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def generate_puzzle(
@@ -267,113 +298,93 @@ def generate_puzzle(
     do_augmentation: bool,
     do_numbering: bool,
     jigsaw_radius_ratio: float,
-    output_dir: str,
 ):
     """
-    Main generation function.
-    Returns (frame_path, piece_info, tab_map_h, tab_map_v).
-    piece_info is a list of (filename, abs_path, rotation_angle, row, col) tuples.
+    Main generation function. Seluruh hasil disimpan di memori.
+    Returns dict: frame (PNG bytes), pieces (list of dict), tab_map_h, tab_map_v, zip (bytes).
+    Citra Grayscale tetap Grayscale; citra RGB tetap RGB.
     """
+    is_gray = image.ndim == 2
     H, W = image.shape[:2]
-    C = image.shape[2] if image.ndim == 3 else 1
-    is_grayscale = (image.ndim == 2 or C == 1)
+    ys = compute_bounds(H, M)
+    xs = compute_bounds(W, M)
 
-    if is_grayscale:
-        rgb = np.stack([image.squeeze()]*3, axis=-1)
-    else:
-        rgb = image[:, :, :3].copy()
-
-    h_step = H // M
-    w_step = W // M
-
-    # 1. CREATE FRAME
-    frame = np.ones((H, W, 3), dtype=np.uint8) * 18
-    line_color = np.array([200, 200, 200], dtype=np.uint8)
-    line_thickness = max(1, min(h_step, w_step) // 30)
-    for i in range(1, M):
-        y = i * h_step
-        frame[max(0, y-line_thickness):y+line_thickness, :] = line_color
-    for j in range(1, M):
-        x = j * w_step
-        frame[:, max(0, x-line_thickness):x+line_thickness] = line_color
-    bw = line_thickness * 2
-    frame[:bw, :] = line_color
-    frame[-bw:, :] = line_color
-    frame[:, :bw] = line_color
-    frame[:, -bw:] = line_color
-
-    frame_path = os.path.join(output_dir, "Bingkai.png")
-    imageio.imwrite(frame_path, frame)
+    # 1. CREATE FRAME (ukuran sama persis dengan citra masukan)
+    min_step = min(H // M, W // M)
+    t = max(1, min_step // 60)
+    frame = np.full((H, W), 18, dtype=np.uint8)
+    for y in ys:
+        y = min(max(y, t), H - t)
+        frame[y-t:y+t, :] = 200
+    for x in xs:
+        x = min(max(x, t), W - t)
+        frame[:, x-t:x+t] = 200
+    if not is_gray:
+        frame = np.stack([frame] * 3, axis=-1)
+    frame_img = Image.fromarray(frame)
 
     # 2. JIGSAW TAB MAPS
     tab_map_h = np.random.choice([-1, 1], size=(M-1, M))
     tab_map_v = np.random.choice([-1, 1], size=(M, M-1))
+    radius = max(2, int(min_step * jigsaw_radius_ratio))
+    pad = radius + 2 if do_jigsaw else 0
+    pad_spec = ((pad, pad), (pad, pad)) + (() if is_gray else ((0, 0),))
+    padded = np.pad(image, pad_spec, mode="edge")
 
     # 3. CUT PIECES
-    piece_info = []
+    pieces = []
     counter = 1
-
     for row in range(M):
         for col in range(M):
-            y0 = row * h_step
-            y1 = (row + 1) * h_step
-            x0 = col * w_step
-            x1 = (col + 1) * w_step
+            y0, y1 = ys[row], ys[row+1]
+            x0, x1 = xs[col], xs[col+1]
+            ph, pw = y1 - y0, x1 - x0
 
-            rgb_patch = rgb[y0:y1, x0:x1].copy()
+            # area potongan + margin pad (berisi piksel tetangga untuk pasak jigsaw)
+            patch = padded[y0:y1 + 2*pad, x0:x1 + 2*pad].copy()
 
             if do_augmentation:
-                rgb_patch = augment_piece(rgb_patch)
+                patch = augment_piece(patch)
 
             if do_jigsaw:
-                mask, pad = create_jigsaw_mask(h_step, w_step, row, col, M,
-                                               tab_map_h, tab_map_v, jigsaw_radius_ratio)
-                canvas_h, canvas_w = h_step + 2*pad, w_step + 2*pad
-                canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
-                canvas[pad:pad+h_step, pad:pad+w_step] = rgb_patch
-
-                if row > 0 and tab_map_h[row-1, col] == -1:
-                    y_src_start = max(0, y0 - pad)
-                    src_h = y0 - y_src_start
-                    if src_h > 0:
-                        canvas[pad - src_h:pad, pad:pad+w_step] = rgb[y_src_start:y0, x0:x1]
-                if row < M-1 and tab_map_h[row, col] == 1:
-                    y_src_end = min(H, y1 + pad)
-                    src_h = y_src_end - y1
-                    if src_h > 0:
-                        canvas[pad+h_step:pad+h_step+src_h, pad:pad+w_step] = rgb[y1:y_src_end, x0:x1]
-                if col > 0 and tab_map_v[row, col-1] == -1:
-                    x_src_start = max(0, x0 - pad)
-                    src_w = x0 - x_src_start
-                    if src_w > 0:
-                        canvas[pad:pad+h_step, pad-src_w:pad] = rgb[y0:y1, x_src_start:x0]
-                if col < M-1 and tab_map_v[row, col] == 1:
-                    x_src_end = min(W, x1 + pad)
-                    src_w = x_src_end - x1
-                    if src_w > 0:
-                        canvas[pad:pad+h_step, pad+w_step:pad+w_step+src_w] = rgb[y0:y1, x1:x_src_end]
-
-                alpha = (mask * 255).astype(np.uint8)
-                rgba = np.dstack((canvas, alpha))
+                mask, _ = create_jigsaw_mask(ph, pw, row, col, M, tab_map_h, tab_map_v, radius)
             else:
-                alpha = np.full((rgb_patch.shape[0], rgb_patch.shape[1]), 255, dtype=np.uint8)
-                rgba = np.dstack((rgb_patch, alpha))
+                mask = np.ones((ph, pw), dtype=bool)
+            alpha = (mask * 255).astype(np.uint8)
+
+            if is_gray:
+                img = Image.fromarray(np.dstack((patch, alpha)), "LA")
+            else:
+                img = Image.fromarray(np.dstack((patch, alpha)), "RGBA")
 
             if do_numbering:
-                rgba = draw_number_on_piece(rgba, counter)
+                img = draw_number_on_piece(img, counter, pad)
 
-            angle = 0
-            if do_rotation:
-                angle = random.choice([0, 90, 180, 270])
-                rgba = rotate_rgba(rgba, angle)
+            angle = random.choice([0, 90, 180, 270]) if do_rotation else 0
+            if angle:
+                img = img.transpose(ROTATIONS[angle])
 
-            fname = f"Piece_{counter:03d}_r{angle}.png"
-            fpath = os.path.join(output_dir, fname)
-            imageio.imwrite(fpath, rgba)
-            piece_info.append((fname, fpath, angle, row, col))
+            pieces.append({
+                "name": f"Piece_{counter:03d}_r{angle}.png",
+                "data": to_png_bytes(img),
+                "angle": angle, "row": row, "col": col,
+            })
             counter += 1
 
-    return frame_path, piece_info, tab_map_h, tab_map_v
+    frame_bytes = to_png_bytes(frame_img)
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("Bingkai.png", frame_bytes)
+        for p in pieces:
+            zf.writestr(f"Pieces/{p['name']}", p["data"])
+
+    return {
+        "frame": frame_bytes,
+        "pieces": pieces,
+        "tab_map_h": tab_map_h,
+        "tab_map_v": tab_map_v,
+        "zip": zip_buf.getvalue(),
+    }
 
 
 # SIDEBAR
@@ -441,16 +452,23 @@ if uploaded_file is None:
         </div>
         """, unsafe_allow_html=True)
 else:
-    image_pil = Image.open(uploaded_file)
-    image_np = np.array(image_pil)
-    is_gray = (image_np.ndim == 2 or (image_np.ndim == 3 and image_np.shape[2] == 1))
+    image_np = load_image(uploaded_file)
+    is_gray = image_np.ndim == 2
+    img_h, img_w = image_np.shape[:2]
+
+    # Hasil lama dibuang jika gambar/parameter berubah
+    settings_key = (uploaded_file.file_id if hasattr(uploaded_file, "file_id") else uploaded_file.name,
+                    M, do_jigsaw, do_rotation, do_augment, do_number, jigsaw_ratio)
+    if st.session_state.get("settings_key") != settings_key:
+        st.session_state.pop("result", None)
+        st.session_state["settings_key"] = settings_key
 
     # Stats row
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown(f"""
         <div class="stat-box">
-            <div class="stat-num">{image_pil.width}x{image_pil.height}</div>
+            <div class="stat-num">{img_w}x{img_h}</div>
             <div class="stat-label">Resolusi</div>
         </div>""", unsafe_allow_html=True)
     with c2:
@@ -479,7 +497,7 @@ else:
     col_img, col_btn = st.columns([3, 1])
     with col_img:
         st.markdown('<div class="section-header">Gambar Original</div>', unsafe_allow_html=True)
-        st.image(image_pil, use_container_width=True)
+        st.image(image_np, use_container_width=True)
     with col_btn:
         st.markdown('<div class="section-header">Aksi</div>', unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
@@ -500,63 +518,73 @@ else:
     # GENERATE
     if generate_btn:
         with st.spinner(f"Memotong gambar menjadi {M*M} potongan..."):
-            temp_dir = tempfile.mkdtemp()
-            frame_path, piece_info, tab_map_h, tab_map_v = generate_puzzle(
+            st.session_state["result"] = generate_puzzle(
                 image_np, M,
                 do_jigsaw=do_jigsaw,
                 do_rotation=do_rotation,
                 do_augmentation=do_augment,
                 do_numbering=do_number,
                 jigsaw_radius_ratio=jigsaw_ratio,
-                output_dir=temp_dir,
             )
-            zip_path = shutil.make_archive(temp_dir + "_puzzle", 'zip', temp_dir)
 
-        st.success(f"Selesai! {M*M} potongan puzzle berhasil dibuat.")
+    result = st.session_state.get("result")
+    if result:
+        pieces = result["pieces"]
+        st.success(f"Selesai! {len(pieces)} potongan puzzle berhasil dibuat.")
 
         # FRAME
         st.markdown('<div class="section-header">Bingkai Acuan (Frame)</div>', unsafe_allow_html=True)
         col_f1, col_f2, col_f3 = st.columns([1, 2, 1])
         with col_f2:
-            st.image(frame_path, use_container_width=True, caption=f"Bingkai {M}x{M} Grid")
-            with open(zip_path, "rb") as f:
+            st.image(result["frame"], use_container_width=True, caption=f"Bingkai {M}x{M} Grid")
+            d1, d2 = st.columns(2)
+            with d1:
                 st.download_button(
-                    label="Unduh Semua Potongan (ZIP)",
-                    data=f,
+                    label="Unduh Bingkai (PNG)",
+                    data=result["frame"],
+                    file_name="Bingkai.png",
+                    mime="image/png",
+                    use_container_width=True,
+                )
+            with d2:
+                st.download_button(
+                    label="Unduh Semua (ZIP)",
+                    data=result["zip"],
                     file_name=f"Puzzle_{M}x{M}.zip",
                     mime="application/zip",
                     use_container_width=True,
                 )
 
         # PIECES GALLERY
-        st.markdown(f'<div class="section-header">Galeri Potongan Puzzle - {M*M} Pieces</div>',
+        st.markdown(f'<div class="section-header">Galeri Potongan Puzzle - {len(pieces)} Pieces</div>',
                     unsafe_allow_html=True)
 
         COLS = min(M, 5)
-        for idx in range(0, len(piece_info), COLS):
-            batch = piece_info[idx: idx + COLS]
+        for idx in range(0, len(pieces), COLS):
+            batch = pieces[idx: idx + COLS]
             cols = st.columns(COLS)
-            for ci, (fname, fpath, angle, row, col) in enumerate(batch):
+            for ci, p in enumerate(batch):
                 with cols[ci]:
-                    st.image(fpath, use_container_width=True)
-                    piece_num = idx + ci + 1
-                    rot_tag = f"Rotasi {angle} deg" if angle else "Tanpa rotasi"
+                    st.image(p["data"], use_container_width=True)
+                    rot_tag = f"Rotasi {p['angle']} deg" if p["angle"] else "Tanpa rotasi"
                     st.markdown(
-                        f'<div class="piece-label">#{piece_num:03d} [{row},{col}] {rot_tag}</div>',
+                        f'<div class="piece-label">#{idx + ci + 1:03d} [{p["row"]},{p["col"]}] {rot_tag}</div>',
                         unsafe_allow_html=True
                     )
 
         # GRID MAP
         with st.expander("Tab/Blank Map (Jigsaw Schema)"):
             if do_jigsaw:
-                st.markdown("**Horizontal Edges** (1 = tab protrudes down, -1 = blank/indent)")
+                st.markdown("**Horizontal Edges** (baris = batas antar row, kolom = col; "
+                            "1 = tab menonjol ke bawah, -1 = blank/indent)")
                 st.dataframe(
-                    {"Row " + str(j): tab_map_h[:, j] for j in range(M)},
+                    {"Col " + str(j): result["tab_map_h"][:, j] for j in range(M)},
                     use_container_width=True
                 )
-                st.markdown("**Vertical Edges** (1 = tab protrudes right, -1 = blank/indent)")
+                st.markdown("**Vertical Edges** (baris = row, kolom = batas antar col; "
+                            "1 = tab menonjol ke kanan, -1 = blank/indent)")
                 st.dataframe(
-                    {"Col " + str(j): tab_map_v[:, j] for j in range(M-1)},
+                    {"Edge " + str(j): result["tab_map_v"][:, j] for j in range(M-1)},
                     use_container_width=True
                 )
             else:
