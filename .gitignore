@@ -6,3 +6,5 @@ output/
 
 # Foto uji lokal
 image/
+
+.streamlit/
