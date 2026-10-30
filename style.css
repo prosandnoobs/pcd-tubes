@@ -1,0 +1,156 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+}
+
+.stApp {
+    background: #111111;
+    min-height: 100vh;
+}
+
+section[data-testid="stSidebar"] {
+    background: #1a1a1a;
+    border-right: 1px solid #2e2e2e;
+}
+
+/* Force all sidebar text to white */
+section[data-testid="stSidebar"] * {
+    color: #ffffff !important;
+}
+
+/* Slider and toggle labels */
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] .stMarkdown,
+section[data-testid="stSidebar"] .stSlider label,
+section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] {
+    color: #ffffff !important;
+}
+
+/* Muted footer text in sidebar */
+section[data-testid="stSidebar"] div[style*="color:#666666"] {
+    color: #888888 !important;
+}
+
+/* Slider value display */
+section[data-testid="stSidebar"] .stSlider [data-testid="stTickBarMin"],
+section[data-testid="stSidebar"] .stSlider [data-testid="stTickBarMax"] {
+    color: #aaaaaa !important;
+}
+
+/* File uploader — match slider track dark background */
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] {
+    background: #2e2e2e !important;
+    border: 1px solid #3a3a3a !important;
+    border-radius: 6px !important;
+}
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
+    background: #2e2e2e !important;
+    border: 1px solid #3a3a3a !important;
+    border-radius: 6px !important;
+}
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] * {
+    color: #aaaaaa !important;
+}
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button {
+    background: #3a3a3a !important;
+    color: #ffffff !important;
+    border: 1px solid #4a4a4a !important;
+    border-radius: 4px !important;
+}
+
+.puzzle-card {
+    background: #1e1e1e;
+    border: 1px solid #2e2e2e;
+    border-radius: 8px;
+    padding: 1.2rem;
+}
+
+.hero-title {
+    font-size: 2.6rem;
+    font-weight: 800;
+    color: #ffffff;
+    text-align: center;
+    margin-bottom: 0.2rem;
+    line-height: 1.15;
+}
+
+.hero-sub {
+    text-align: center;
+    color: #888888;
+    font-size: 0.95rem;
+    margin-bottom: 2rem;
+}
+
+.badge {
+    display: inline-block;
+    background: #2e2e2e;
+    color: #dddddd;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 4px;
+    margin-right: 4px;
+    border: 1px solid #3a3a3a;
+}
+
+.stat-box {
+    background: #1e1e1e;
+    border: 1px solid #2e2e2e;
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+    text-align: center;
+}
+.stat-num { font-size: clamp(0.95rem, 1.6vw, 1.6rem); font-weight: 700; color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-label { font-size: 0.75rem; color: #777777; margin-top: 2px; }
+
+div.stButton > button {
+    background: #2e2e2e !important;
+    color: #ffffff !important;
+    border: 1px solid #444444 !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    font-size: 0.95rem !important;
+    padding: 0.55rem 1.5rem !important;
+    width: 100%;
+    transition: background 0.15s;
+}
+div.stButton > button:hover {
+    background: #3a3a3a !important;
+    border-color: #555555 !important;
+}
+
+div.stDownloadButton > button {
+    background: #1e3a2e !important;
+    color: #ffffff !important;
+    border: 1px solid #2e5c45 !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    width: 100%;
+}
+div.stDownloadButton > button:hover {
+    background: #254d3c !important;
+}
+
+.piece-label {
+    font-size: 0.70rem;
+    color: #888888;
+    text-align: center;
+    margin-top: 4px;
+}
+
+.section-header {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #ffffff;
+    border-left: 3px solid #555555;
+    padding-left: 10px;
+    margin: 1.5rem 0 1rem;
+}
+
+footer { visibility: hidden; }
