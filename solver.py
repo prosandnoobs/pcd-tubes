@@ -1,11 +1,11 @@
 """
-Puzzle World - Modul Puzzle Solver (Versi Tanpa Library)
+Puzzle World - Modul Puzzle Solver (Versi NumPy)
 Tugas Besar Pengolahan Citra Digital
 
 Input  : 1 citra Bingkai + N citra Potongan (hasil Puzzle Generator).
 Output : citra utuh yang telah tersusun.
 
-Pengolahan citra diimplementasikan manual dengan Python murni (tanpa NumPy);
+Pengolahan citra diimplementasikan dengan operasi array NumPy;
 PIL hanya dipakai untuk membaca (decode) dan menyimpan (encode) file gambar.
 
 Tahapan:
@@ -26,6 +26,8 @@ import io
 import json
 import zipfile
 
+import numpy as np
+import streamlit as st
 from PIL import Image  # hanya untuk baca/simpan file gambar
 
 from generator import compute_bounds, rotate, to_png_bytes
@@ -39,13 +41,10 @@ ROTATIONS = (0, 90, 180, 270)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def decode_png(data):
-    """Decode file gambar menjadi list baris piksel (v, a) atau (r, g, b, a)."""
+    """Decode file gambar menjadi array H x W x C (kanal terakhir = alpha)."""
     pil = Image.open(io.BytesIO(data))
     gray = pil.mode in ("L", "LA", "1", "I", "I;16", "F")
-    pil = pil.convert("LA" if gray else "RGBA")
-    w, h = pil.size
-    flat = list(pil.getdata())
-    return [flat[r * w:(r + 1) * w] for r in range(h)]
+    return np.array(pil.convert("LA" if gray else "RGBA"))
 
 
 def base_name(path):
@@ -86,8 +85,7 @@ def read_solver_input(files):
         # Tanpa nama "Bingkai": pilih citra terbesar yang tidak punya piksel transparan
         def score(item):
             px = decode_png(item[1])
-            opaque = all(p[-1] == 255 for row in px for p in row)
-            return (opaque, len(px) * len(px[0]))
+            return ((px[:, :, -1] == 255).all(), px.shape[0] * px.shape[1])
         frame = max(pieces, key=score)
         pieces.remove(frame)
 
@@ -101,12 +99,7 @@ def read_solver_input(files):
 
 def count_runs(flags):
     """Hitung jumlah kelompok True yang berurutan."""
-    runs, prev = 0, False
-    for f in flags:
-        if f and not prev:
-            runs += 1
-        prev = f
-    return runs
+    return int(flags[0]) + int((np.diff(flags.astype(int)) == 1).sum())
 
 
 def detect_grid(frame_px):
@@ -114,15 +107,9 @@ def detect_grid(frame_px):
     Cari M dari citra bingkai dengan profil proyeksi: kolom/baris yang hampir
     seluruhnya terang dianggap garis grid. Jumlah garis = M + 1.
     """
-    H, W = len(frame_px), len(frame_px[0])
-
-    def lum(p):
-        return p[0] if len(p) == 2 else (p[0] + p[1] + p[2]) / 3
-
-    rows = range(0, H, max(1, H // 200))
-    cols = range(0, W, max(1, W // 200))
-    col_line = [sum(lum(frame_px[y][x]) > 100 for y in rows) >= 0.9 * len(rows) for x in range(W)]
-    row_line = [sum(lum(frame_px[y][x]) > 100 for x in cols) >= 0.9 * len(cols) for y in range(H)]
+    bright = frame_px[:, :, :-1].mean(axis=2) > 100
+    col_line = bright.mean(axis=0) >= 0.9
+    row_line = bright.mean(axis=1) >= 0.9
     m_w, m_h = count_runs(col_line) - 1, count_runs(row_line) - 1
     return m_w if m_w == m_h and m_w >= 1 else None
 
@@ -136,13 +123,12 @@ def detect_pad(px):
     Tebal margin pasak = jarak dari sudut ke piksel ber-alpha pertama di diagonal.
     Sudut inti potongan selalu terisi, sedangkan sudut margin selalu transparan.
     """
-    H, W = len(px), len(px[0])
+    alpha = px[:, :, -1]
+    limit = min(alpha.shape) // 2
     pads = []
-    for (y0, x0, dy, dx) in ((0, 0, 1, 1), (0, W - 1, 1, -1), (H - 1, 0, -1, 1), (H - 1, W - 1, -1, -1)):
-        k = 0
-        while k < min(H, W) // 2 and px[y0 + dy * k][x0 + dx * k][-1] == 0:
-            k += 1
-        pads.append(k)
+    for corner in (alpha, alpha[::-1], alpha[:, ::-1], alpha[::-1, ::-1]):
+        filled = np.flatnonzero(np.diagonal(corner)[:limit])
+        pads.append(int(filled[0]) if len(filled) else limit)
     return min(pads)
 
 
@@ -167,32 +153,25 @@ def side_type(px, pad, side):
 
 def edge_lines(px, pad, side):
     """Dua garis piksel terluar inti pada satu sisi (garis tepi & garis di sebelahnya)."""
-    core = [row[pad:len(row) - pad] for row in px[pad:len(px) - pad]]
+    core = px[pad:len(px) - pad, pad:px.shape[1] - pad]
     if side == "top":
         return core[0], core[1]
     if side == "bottom":
         return core[-1], core[-2]
     if side == "left":
-        return [r[0] for r in core], [r[1] for r in core]
-    return [r[-1] for r in core], [r[-2] for r in core]
+        return core[:, 0], core[:, 1]
+    return core[:, -1], core[:, -2]
 
 
 def sample_edge(line1, line2, S):
     """
     Ambil S sampel merata sepanjang tepi (nilai intensitas asli 0..255).
-    Returns list S elemen: tuple (nilai_tepi..., nilai_dalam...) atau None jika transparan.
+    Returns (tepi, dalam, valid): tepi & dalam berukuran S x C, valid = sampel tidak transparan.
     """
     n = len(line1)
-    C = len(line1[0]) - 1
-    out = []
-    for i in range(S):
-        j = min(n - 1, int((i + 0.5) * n / S))
-        a, b = line1[j], line2[j]
-        if a[-1] and b[-1]:
-            out.append(tuple(a[:C]) + tuple(b[:C]))
-        else:
-            out.append(None)
-    return out
+    idx = np.minimum(n - 1, ((np.arange(S) + 0.5) * n / S).astype(int))
+    a, b = line1[idx].astype(float), line2[idx].astype(float)
+    return a[:, :-1], b[:, :-1], (a[:, -1] > 0) & (b[:, -1] > 0)
 
 
 def prepare_pieces(pieces_px, ph, pw, allow_rotation, S):
@@ -235,20 +214,17 @@ def edge_cost(ea, eb):
       gradien   = sum |(A_tepi - A_dalam) - (B_dalam - B_tepi)|   (kontinuitas gradien)
       biaya     = (residu + 0.5 * gradien) / n + 0.05 * sum |offset|
     """
-    diffs, grad, cnt, C = [], 0.0, 0, 1
-    for a, b in zip(ea, eb):
-        if a is None or b is None:
-            continue
-        C = len(a) // 2
-        diffs.append([a[c] - b[c] for c in range(C)])
-        for c in range(C):
-            grad += abs((a[c] - a[C + c]) - (b[C + c] - b[c]))
-        cnt += 1
-    if cnt < max(2, len(ea) // 4):
+    a_edge, a_in, a_ok = ea
+    b_edge, b_in, b_ok = eb
+    ok = a_ok & b_ok
+    cnt = ok.sum()
+    if cnt < max(2, len(ok) // 4):
         return INF
-    offset = [sum(d[c] for d in diffs) / cnt for c in range(C)]
-    resid = sum(abs(d[c] - offset[c]) for d in diffs for c in range(C))
-    return (resid + 0.5 * grad) / cnt + 0.05 * sum(abs(o) for o in offset)
+    d = a_edge[ok] - b_edge[ok]
+    offset = d.mean(axis=0)
+    resid = np.abs(d - offset).sum()
+    grad = np.abs((a_edge[ok] - a_in[ok]) - (b_in[ok] - b_edge[ok])).sum()
+    return (resid + 0.5 * grad) / cnt + 0.05 * np.abs(offset).sum()
 
 
 def compatible(type_a, type_b):
@@ -258,8 +234,8 @@ def compatible(type_a, type_b):
 
 def build_cost_tables(oriented, use_types):
     K = len(oriented)
-    LR = [[INF] * K for _ in range(K)]  # LR[a][b]: a di kiri b
-    TB = [[INF] * K for _ in range(K)]  # TB[a][b]: a di atas b
+    LR = np.full((K, K), INF)  # LR[a][b]: a di kiri b
+    TB = np.full((K, K), INF)  # TB[a][b]: a di atas b
     for i, a in enumerate(oriented):
         for j, b in enumerate(oriented):
             if a["pid"] == b["pid"]:
@@ -277,16 +253,13 @@ def normalize_costs(T):
     seperti pada Gallagher (2012). Nilai < 1 berarti pasangan itu jauh lebih cocok
     dibanding alternatif lainnya, sehingga lebih bisa dipercaya.
     """
-    K = len(T)
-
     def second(values):
-        v = sorted(x for x in values if x < INF)
-        return v[1] if len(v) > 1 else (v[0] if v else 1.0)
+        v = np.sort(values[values < INF])
+        return v[1] if len(v) > 1 else (v[0] if len(v) else 1.0)
 
-    row2 = [second(T[i]) for i in range(K)]
-    col2 = [second(T[i][j] for i in range(K)) for j in range(K)]
-    return [[T[i][j] / (min(row2[i], col2[j]) + 1e-6) if T[i][j] < INF else INF
-             for j in range(K)] for i in range(K)]
+    row2 = np.array([second(row) for row in T])
+    col2 = np.array([second(col) for col in T.T])
+    return T / (np.minimum(row2[:, None], col2[None, :]) + 1e-6)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -402,15 +375,9 @@ def grid_cost(grid, LR, TB, M):
 
 def choose_seeds(oriented, LR, TB, n_seeds):
     """Potongan awal: yang memiliki pasangan paling meyakinkan (rasio terkecil)."""
-    K = len(oriented)
-    conf = []
-    for k in range(K):
-        best = min(min(LR[k]), min(TB[k]),
-                   min(LR[j][k] for j in range(K)), min(TB[j][k] for j in range(K)))
-        conf.append((best, k))
-    conf.sort()
+    best = np.minimum.reduce([LR.min(axis=1), TB.min(axis=1), LR.min(axis=0), TB.min(axis=0)])
     seeds, seen = [], set()
-    for _, k in conf:
+    for k in np.argsort(best, kind="stable").tolist():
         pid = oriented[k]["pid"]
         if pid not in seen:
             seen.add(pid)
@@ -424,35 +391,31 @@ def choose_seeds(oriented, LR, TB, n_seeds):
 # 6. REKONSTRUKSI & EVALUASI
 # ──────────────────────────────────────────────────────────────────────────────
 
+def paste(canvas, px, oy, ox):
+    """Tempel piksel tidak transparan dari px ke kanvas mulai posisi (oy, ox)."""
+    H, W = canvas.shape[:2]
+    y0, y1 = max(oy, 0), min(oy + px.shape[0], H)
+    x0, x1 = max(ox, 0), min(ox + px.shape[1], W)
+    part = px[y0 - oy:y1 - oy, x0 - ox:x1 - ox]
+    visible = part[:, :, -1] > 0
+    canvas[y0:y1, x0:x1][visible] = part[visible][:, :-1]
+
+
 def render(grid, oriented, H, W, M):
     """Tempel tiap potongan (beserta pasaknya) ke kanvas; pasak mengisi cekungan tetangganya."""
     ys, xs = compute_bounds(H, M), compute_bounds(W, M)
-    bg = (0,) * (len(oriented[0]["px"][0][0]) - 1)
-    canvas = [[bg] * W for _ in range(H)]
+    canvas = np.zeros((H, W, oriented[0]["px"].shape[2] - 1), dtype=np.uint8)
     for r in range(M):
         for c in range(M):
             o = oriented[grid[r][c]]
             px, pad = o["px"], o["pad"]
-            oy, ox = ys[r] - pad, xs[c] - pad
-            for dy, row in enumerate(px):
-                y = oy + dy
-                if 0 <= y < H:
-                    out = canvas[y]
-                    for dx, p in enumerate(row):
-                        x = ox + dx
-                        if p[-1] and 0 <= x < W:
-                            out[x] = p[:-1]
+            paste(canvas, px, ys[r] - pad, xs[c] - pad)
     return canvas
 
 
-def png_mode(px):
-    return "L" if len(px[0][0]) == 1 else "RGB"
-
-
 def rotate_result(png_bytes, angle):
-    """Putar citra hasil (berlawanan arah jarum jam) dengan rotasi manual."""
-    px = rotate([[p[:-1] for p in row] for row in decode_png(png_bytes)], angle)
-    return to_png_bytes(px, len(px[0]), len(px), png_mode(px))
+    """Putar citra hasil (berlawanan arah jarum jam)."""
+    return to_png_bytes(rotate(decode_png(png_bytes)[:, :, :-1], angle))
 
 
 def neighbor_accuracy(layout, expected, M):
@@ -488,9 +451,9 @@ def evaluate(layout, answer, M):
     best = None
     for g in ROTATIONS:
         # posisi & rotasi koreksi yang benar jika seluruh hasil terputar g derajat
-        expected = [[None] * M for _ in range(M)]
+        expected = np.empty((M, M), dtype=object)
         for name, t in truth.items():
-            expected[t["row"]][t["col"]] = (name, (360 - t["angle"] + g) % 360)
+            expected[t["row"], t["col"]] = (name, (360 - t["angle"] + g) % 360)
         expected = rotate(expected, g)
         pos_ok = rot_ok = 0
         for r in range(M):
@@ -523,7 +486,7 @@ def solve_puzzle(frame_bytes, pieces, allow_rotation=True, progress=None):
 
     step(0.05, "Mendeteksi grid dari bingkai...")
     frame_px = decode_png(frame_bytes)
-    H, W = len(frame_px), len(frame_px[0])
+    H, W = frame_px.shape[:2]
     N = len(pieces)
     M = detect_grid(frame_px)
     if M is None or M * M != N:
@@ -558,10 +521,154 @@ def solve_puzzle(frame_bytes, pieces, allow_rotation=True, progress=None):
               for row in best_grid]
     step(1.0, "Selesai")
     return {
-        "image": to_png_bytes(canvas, W, H, png_mode(canvas)),
+        "image": to_png_bytes(canvas),
         "M": M,
         "layout": layout,
         "cost": best_cost,
         "jigsaw": use_types,
         "size": (W, H),
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SUSUN MANUAL: LOGIKA PERMAINAN
+# ──────────────────────────────────────────────────────────────────────────────
+
+def new_game(data):
+    """
+    Buat permainan dari hasil read_solver_input. Pemain menyusun sendiri: pilih potongan,
+    putar bila perlu, lalu klik slot tujuan pada grid.
+    Keadaan game: pieces (list dict {name, px, pad, rot}), grid (M x M berisi indeks
+    potongan atau None), selected (indeks potongan terpilih atau None).
+    """
+    frame = decode_png(data["frame"][1])
+    N = len(data["pieces"])
+    M = detect_grid(frame)
+    if M is None or M * M != N:
+        M = round(N ** 0.5)
+        if M * M != N:
+            raise ValueError(f"Jumlah potongan ({N}) bukan bilangan kuadrat.")
+    pieces = []
+    for name, png in data["pieces"]:
+        px = decode_png(png)
+        pieces.append({"name": base_name(name), "px": px, "pad": detect_pad(px), "rot": 0})
+    return {"M": M, "frame": frame[:, :, :-1], "pieces": pieces, "answer": data["answer"],
+            "grid": [[None] * M for _ in range(M)], "selected": None}
+
+
+def click_slot(game, r, c):
+    """Pasang potongan terpilih ke slot; slot terisi ditukar kembali ke daftar potongan."""
+    occupant = game["grid"][r][c]
+    game["grid"][r][c] = game["selected"]
+    game["selected"] = occupant
+
+
+def tray(game):
+    """Indeks potongan yang belum terpasang di grid."""
+    placed = {k for row in game["grid"] for k in row}
+    return [k for k in range(len(game["pieces"])) if k not in placed]
+
+
+def render_board(game):
+    """Tempel potongan yang sudah terpasang ke atas citra bingkai."""
+    canvas = game["frame"].copy()
+    H, W = canvas.shape[:2]
+    ys, xs = compute_bounds(H, game["M"]), compute_bounds(W, game["M"])
+    for r, row in enumerate(game["grid"]):
+        for c, k in enumerate(row):
+            if k is None:
+                continue
+            p = game["pieces"][k]
+            paste(canvas, rotate(p["px"], p["rot"]), ys[r] - p["pad"], xs[c] - p["pad"])
+    return canvas
+
+
+def check_game(game):
+    """Nilai susunan yang sudah lengkap dengan kunci jawaban."""
+    layout = [[(game["pieces"][k]["name"], game["pieces"][k]["rot"]) for k in row]
+              for row in game["grid"]]
+    return evaluate(layout, game["answer"], game["M"])
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SUSUN MANUAL: HALAMAN
+# ──────────────────────────────────────────────────────────────────────────────
+
+def manual_page(header, section, empty_state, sidebar_footer):
+    """Komponen tampilan diterima dari app.py agar gayanya sama dengan halaman lain."""
+    with st.sidebar:
+        st.markdown("## Pengaturan Permainan")
+        st.markdown("---")
+        uploads = st.file_uploader("Upload ZIP hasil generator, atau Bingkai + Potongan",
+                                   type=["zip", "png", "json"], accept_multiple_files=True,
+                                   key="manual_uploads")
+        sidebar_footer()
+
+    header("Susun Manual")
+    if not uploads:
+        empty_state("Upload Bingkai &amp; Potongan",
+                    "Upload file ZIP hasil Puzzle Generator untuk mulai menyusun sendiri.")
+        return
+
+    files = [(f.name, f.getvalue()) for f in uploads]
+    files_key = tuple((n, len(b)) for n, b in files)
+    if st.session_state.get("manual_key") != files_key:
+        data = read_solver_input(files)
+        if data["frame"] is None or not data["pieces"]:
+            st.error("Input belum lengkap: dibutuhkan 1 citra bingkai dan minimal 1 potongan.")
+            return
+        try:
+            st.session_state["manual_game"] = new_game(data)
+        except ValueError as e:
+            st.error(str(e))
+            return
+        st.session_state["manual_key"] = files_key
+    game = st.session_state["manual_game"]
+    M, pieces = game["M"], game["pieces"]
+
+    col_board, col_ctrl = st.columns([3, 2])
+    with col_board:
+        section("Papan")
+        st.image(to_png_bytes(render_board(game)), use_container_width=True)
+    with col_ctrl:
+        section("Slot Grid")
+        st.caption("Klik slot untuk memasang potongan terpilih, atau klik slot terisi untuk mengambilnya.")
+        for r in range(M):
+            for c, col in enumerate(st.columns(M)):
+                filled = game["grid"][r][c] is not None
+                if col.button("■" if filled else "□", key=f"slot_{r}_{c}", use_container_width=True):
+                    click_slot(game, r, c)
+                    st.rerun()
+
+        selected = game["selected"]
+        if selected is not None:
+            p = pieces[selected]
+            st.image(to_png_bytes(rotate(p["px"], p["rot"])), width=120,
+                     caption=f"Terpilih: {p['name']}")
+            if st.button("Putar 90 deg", use_container_width=True):
+                p["rot"] = (p["rot"] + 90) % 360
+                st.rerun()
+
+        if st.button("Periksa", use_container_width=True):
+            if tray(game):
+                st.warning("Pasang semua potongan terlebih dahulu.")
+            elif not game["answer"]:
+                st.info("Kunci jawaban (answer.json) tidak tersedia.")
+            else:
+                ev = check_game(game)
+                if ev["position"] == 1 and ev["rotation"] == 1:
+                    st.success("Selamat, puzzle tersusun dengan benar!")
+                else:
+                    st.warning(f"Posisi benar {ev['position'] * 100:.1f}%, "
+                               f"rotasi benar {ev['rotation'] * 100:.1f}%.")
+
+    waiting = [k for k in tray(game) if k != game["selected"]]
+    section(f"Potongan Tersedia ({len(waiting)})")
+    cols = st.columns(8)
+    for i, k in enumerate(waiting):
+        p = pieces[k]
+        with cols[i % 8]:
+            st.image(to_png_bytes(rotate(p["px"], p["rot"])), use_container_width=True)
+            if st.button("Pilih", key=f"pick_{k}", use_container_width=True):
+                game["selected"] = k
+                st.rerun()

@@ -1,13 +1,12 @@
 """
-Puzzle World - Modul Puzzle Generator (Versi Tanpa Library)
+Puzzle World - Modul Puzzle Generator (Versi NumPy)
 Tugas Besar Pengolahan Citra Digital
 
-Seluruh pengolahan citra ditulis manual dengan Python murni (tanpa NumPy).
+Seluruh pengolahan citra ditulis dengan operasi array NumPy.
 PIL hanya dipakai untuk membaca (decode) dan menyimpan (encode) file gambar.
 
 Representasi citra: dict {"w", "h", "gray", "px"}
-  px = list baris, setiap piksel berupa tuple kanal:
-       (v,) untuk grayscale atau (r, g, b) untuk RGB.
+  px = array uint8 berukuran H x W x C (C = 1 untuk grayscale, 3 untuk RGB).
 """
 
 import io
@@ -15,14 +14,15 @@ import json
 import random
 import zipfile
 
+import numpy as np
 from PIL import Image  # hanya untuk baca/simpan file gambar
 
-MAX_SIDE = 600  # sisi terpanjang setelah diperkecil (loop Python murni relatif lambat)
+MAX_SIDE = 600  # sisi terpanjang setelah diperkecil
 
 
-def clip(v):
-    """Batasi intensitas ke rentang 0..255."""
-    return 0 if v < 0 else 255 if v > 255 else int(v + 0.5)
+def to_uint8(a):
+    """Batasi intensitas ke rentang 0..255 lalu bulatkan."""
+    return np.clip(a + 0.5, 0, 255).astype(np.uint8)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -40,54 +40,37 @@ def load_image(file_bytes, max_side=MAX_SIDE):
     if not high_depth:
         pil = pil.convert("L" if gray else "RGB")
     w, h = pil.size
-    data = pil.getdata()
+    data = np.asarray(pil, dtype=float)
+    if gray:
+        data = data[:, :, np.newaxis]
 
     scale = min(1.0, max_side / max(w, h))
     nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
 
-    def samples(i, n_new, n_old):
-        """3 titik sampel di dalam blok ke-i (hasil perkecilan) pada satu sumbu."""
-        lo, hi = i * n_old // n_new, max(i * n_old // n_new + 1, (i + 1) * n_old // n_new)
-        k = min(3, hi - lo)
-        return [lo + (2 * j + 1) * (hi - lo) // (2 * k) for j in range(k)]
+    def samples(n_new, n_old):
+        """Indeks 3 titik sampel di dalam tiap blok: array n_new x 3."""
+        return ((np.arange(n_new)[:, None] + [1 / 6, 1 / 2, 5 / 6]) * n_old / n_new).astype(int)
 
-    sx = [samples(c, nw, w) for c in range(nw)]
-    px = []
-    for r in range(nh):
-        rows = [y * w for y in samples(r, nh, h)]
-        row = []
-        for xs in sx:
-            vals = [data[base + x] for base in rows for x in xs]
-            if gray:
-                row.append((sum(vals) / len(vals),))
-            else:
-                row.append(tuple(sum(v[ch] for v in vals) / len(vals) for ch in range(3)))
-        px.append(row)
+    # hasil pengindeksan: nh x nw x 3 x 3 x C, dirata-ratakan pada 3 x 3 titik sampel
+    px = data[samples(nh, h)[:, None, :, None], samples(nw, w)[None, :, None, :]].mean(axis=(2, 3))
 
     # Normalisasi min-max: citra 16-bit / float dipetakan ke 0..255
-    lo, hi, k = 0, 255, 1
     if high_depth:
-        lo = min(p[0] for row in px for p in row)
-        hi = max(p[0] for row in px for p in row)
-        k = 255 / (hi - lo) if hi > lo else 0
-    px = [[tuple(clip((v - lo) * k) for v in p) for p in row] for row in px]
-    return {"w": nw, "h": nh, "gray": gray, "px": px}, w, h
+        lo, hi = px.min(), px.max()
+        px = (px - lo) * (255 / (hi - lo)) if hi > lo else np.zeros_like(px)
+    return {"w": nw, "h": nh, "gray": gray, "px": to_uint8(px)}, w, h
 
 
-def to_png_bytes(px, w, h, mode):
-    """Simpan list piksel 2D (tuple kanal) ke PNG. mode: L, LA, RGB atau RGBA."""
-    flat = [p for row in px for p in row]
-    if mode == "L":
-        flat = [p[0] for p in flat]  # PIL meminta int untuk citra 1 kanal
-    pil = Image.new(mode, (w, h))
-    pil.putdata(flat)
+def to_png_bytes(px):
+    """Simpan array H x W x C ke PNG (C = 1: L, 2: LA, 3: RGB, 4: RGBA)."""
+    pil = Image.fromarray(px[:, :, 0] if px.shape[2] == 1 else px)
     buf = io.BytesIO()
     pil.save(buf, format="PNG")
     return buf.getvalue()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# OPERASI CITRA MANUAL
+# OPERASI CITRA
 # ──────────────────────────────────────────────────────────────────────────────
 
 def compute_bounds(length, M):
@@ -97,9 +80,9 @@ def compute_bounds(length, M):
 
 def crop_with_edge_pad(img, y0, y1, x0, x1, pad):
     """Potong area [y0-pad, y1+pad) x [x0-pad, x1+pad); piksel di luar citra = piksel tepi terdekat."""
-    src, H, W = img["px"], img["h"], img["w"]
-    xs = [min(max(x, 0), W - 1) for x in range(x0 - pad, x1 + pad)]
-    return [[src[min(max(y, 0), H - 1)][x] for x in xs] for y in range(y0 - pad, y1 + pad)]
+    ys = np.clip(np.arange(y0 - pad, y1 + pad), 0, img["h"] - 1)
+    xs = np.clip(np.arange(x0 - pad, x1 + pad), 0, img["w"] - 1)
+    return img["px"][np.ix_(ys, xs)]
 
 
 def create_jigsaw_mask(ph, pw, row, col, M, tab_h, tab_v, radius):
@@ -111,13 +94,12 @@ def create_jigsaw_mask(ph, pw, row, col, M, tab_h, tab_v, radius):
     """
     pad = radius + 2
     H, W = ph + 2 * pad, pw + 2 * pad
-    mask = [[pad <= y < pad + ph and pad <= x < pad + pw for x in range(W)] for y in range(H)]
+    mask = np.zeros((H, W), dtype=bool)
+    mask[pad:pad + ph, pad:pad + pw] = True
+    yy, xx = np.ogrid[:H, :W]
 
     def circle(cy, cx, value):
-        for y in range(max(0, cy - radius), min(H, cy + radius + 1)):
-            for x in range(max(0, cx - radius), min(W, cx + radius + 1)):
-                if (y - cy) ** 2 + (x - cx) ** 2 <= radius * radius:
-                    mask[y][x] = value
+        mask[(yy - cy) ** 2 + (xx - cx) ** 2 <= radius * radius] = value
 
     # Sisi atas/kiri berpasangan dengan sisi bawah/kanan tetangganya (tandanya berlawanan)
     if row > 0:
@@ -137,27 +119,14 @@ def augment_piece(patch):
     mean = rata-rata luminans potongan setelah brightness.
     """
     b, c = random.uniform(0.8, 1.2), random.uniform(0.8, 1.2)
-    weights = (1,) if len(patch[0][0]) == 1 else (0.299, 0.587, 0.114)
-    lum = [sum(w * v for w, v in zip(weights, p)) for row in patch for p in row]
-    mean = sum(lum) / len(lum) * b
-    return [[tuple(clip(mean + c * (v * b - mean)) for v in p) for p in row] for row in patch]
+    weights = [1] if patch.shape[2] == 1 else [0.299, 0.587, 0.114]
+    mean = (patch @ np.array(weights)).mean() * b
+    return to_uint8(mean + c * (patch * b - mean))
 
 
 def rotate(px, angle):
-    """
-    Rotasi berlawanan arah jarum jam dengan pemetaan indeks (H x W -> W x H):
-       90 : new[r][c] = old[c][W-1-r]
-      180 : new[r][c] = old[H-1-r][W-1-c]
-      270 : new[r][c] = old[H-1-c][r]
-    """
-    H, W = len(px), len(px[0])
-    if angle == 90:
-        return [[px[c][W - 1 - r] for c in range(H)] for r in range(W)]
-    if angle == 180:
-        return [row[::-1] for row in px[::-1]]
-    if angle == 270:
-        return [[px[H - 1 - c][r] for c in range(H)] for r in range(W)]
-    return px
+    """Rotasi berlawanan arah jarum jam sebesar 0/90/180/270 derajat."""
+    return np.rot90(px, angle // 90)
 
 
 # Font bitmap 3x5 untuk angka 0-9 (1 = piksel menyala)
@@ -172,19 +141,16 @@ DIGITS = {
 
 def draw_number(px, number, offset):
     """Tulis nomor potongan dengan font bitmap: bayangan hitam lalu teks putih."""
-    H, W = len(px), len(px[0])
-    s = max(2, min(H, W) // 25)  # ukuran satu titik font
-    n_color = len(px[0][0]) - 1  # jumlah kanal warna (tanpa alpha)
+    s = max(2, min(px.shape[:2]) // 25)  # ukuran satu titik font
     for value, shift in ((0, max(1, s // 2)), (255, 0)):
-        color = (value,) * n_color + (255,)
         x0 = y0 = offset + 4 + shift
         for ch in str(number):
             for gy, line in enumerate(DIGITS[ch]):
                 for gx, bit in enumerate(line):
                     if bit == "1":
-                        for y in range(max(0, y0 + gy * s), min(H, y0 + (gy + 1) * s)):
-                            for x in range(max(0, x0 + gx * s), min(W, x0 + (gx + 1) * s)):
-                                px[y][x] = color
+                        cell = px[y0 + gy * s:y0 + (gy + 1) * s, x0 + gx * s:x0 + (gx + 1) * s]
+                        cell[:, :, :-1] = value  # kanal warna
+                        cell[:, :, -1] = 255     # kanal alpha
             x0 += 4 * s
     return px
 
@@ -196,12 +162,15 @@ def draw_number(px, number, offset):
 def make_frame(image, ys, xs, thickness):
     """Bingkai kosong seukuran citra: latar gelap + garis grid terang."""
     H, W = image["h"], image["w"]
-    n = 1 if image["gray"] else 3
-    bg, line = (18,) * n, (200,) * n
     t = thickness
-    line_rows = {y for b in ys for y in range(min(max(b, t), H - t) - t, min(max(b, t), H - t) + t)}
-    line_cols = {x for b in xs for x in range(min(max(b, t), W - t) - t, min(max(b, t), W - t) + t)}
-    return [[line if (y in line_rows or x in line_cols) else bg for x in range(W)] for y in range(H)]
+    frame = np.full(image["px"].shape, 18, dtype=np.uint8)
+    for b in ys:
+        y = min(max(b, t), H - t)
+        frame[y - t:y + t] = 200
+    for b in xs:
+        x = min(max(b, t), W - t)
+        frame[:, x - t:x + t] = 200
+    return frame
 
 
 def generate_puzzle(image, M, do_jigsaw, do_rotation, do_augmentation, do_numbering,
@@ -210,14 +179,12 @@ def generate_puzzle(image, M, do_jigsaw, do_rotation, do_augmentation, do_number
     Pecah citra menjadi M x M potongan.
     Returns dict {frame (PNG), pieces [dict], tab_map_h, tab_map_v, zip (bytes)}.
     """
-    gray, H, W = image["gray"], image["h"], image["w"]
-    mode = "L" if gray else "RGB"
+    H, W = image["h"], image["w"]
     ys, xs = compute_bounds(H, M), compute_bounds(W, M)
     min_step = min(H // M, W // M)
 
     # 1. Bingkai (ukuran sama dengan citra masukan)
-    frame = make_frame(image, ys, xs, max(1, min_step // 60))
-    frame_bytes = to_png_bytes(frame, W, H, mode)
+    frame_bytes = to_png_bytes(make_frame(image, ys, xs, max(1, min_step // 60)))
 
     # 2. Peta tab/blank jigsaw untuk setiap batas antar potongan
     tab_h = [[random.choice([-1, 1]) for _ in range(M)] for _ in range(M - 1)]
@@ -236,15 +203,13 @@ def generate_puzzle(image, M, do_jigsaw, do_rotation, do_augmentation, do_number
             if do_jigsaw:
                 mask = create_jigsaw_mask(ph, pw, row, col, M, tab_h, tab_v, radius)
             else:
-                mask = [[True] * pw for _ in range(ph)]
+                mask = np.ones((ph, pw), dtype=bool)
             # tambahkan kanal alpha: 255 = bagian potongan, 0 = transparan
-            piece = [[p + (255 if m else 0,) for p, m in zip(prow, mrow)]
-                     for prow, mrow in zip(patch, mask)]
+            piece = np.dstack([patch, mask * np.uint8(255)])
             if do_numbering:
                 piece = draw_number(piece, row * M + col + 1, pad)
             angle = random.choice([0, 90, 180, 270]) if do_rotation else 0
-            piece = rotate(piece, angle)
-            pieces.append({"data": to_png_bytes(piece, len(piece[0]), len(piece), mode + "A"),
+            pieces.append({"data": to_png_bytes(rotate(piece, angle)),
                            "angle": angle, "row": row, "col": col})
 
     # 4. Acak urutan; nama file tidak membocorkan posisi/rotasi (kunci ada di answer.json)

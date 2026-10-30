@@ -1,11 +1,11 @@
 """
-Puzzle World - Antarmuka Streamlit (Versi Tanpa Library)
+Puzzle World - Antarmuka Streamlit (Versi NumPy)
 Tugas Besar Pengolahan Citra Digital
 
   - Puzzle Generator : citra -> 1 Bingkai + M x M Potongan (jigsaw, rotasi, augmentasi, nomor)
   - Puzzle Solver    : Bingkai + Potongan -> citra utuh
 
-Pengolahan citra ada di generator.py dan solver.py (Python murni);
+Pengolahan citra ada di generator.py dan solver.py (NumPy);
 file ini hanya berisi tampilan.
 """
 
@@ -15,7 +15,7 @@ from pathlib import Path
 import streamlit as st
 
 from generator import load_image, to_png_bytes, generate_puzzle
-from solver import solve_puzzle, read_solver_input, rotate_result, evaluate
+from solver import solve_puzzle, read_solver_input, rotate_result, evaluate, manual_page
 
 st.set_page_config(page_title="Puzzle World", layout="wide", initial_sidebar_state="expanded")
 st.markdown(f"<style>{(Path(__file__).parent / 'style.css').read_text()}</style>",
@@ -34,7 +34,7 @@ def html(content):
 
 def header(subtitle):
     html('<div class="hero-title">Puzzle World</div>')
-    html(f'<div class="hero-sub">Pengolahan Citra Digital - {subtitle} (Tanpa Library)</div>')
+    html(f'<div class="hero-sub">Pengolahan Citra Digital - {subtitle} (NumPy)</div>')
 
 
 def section(title):
@@ -72,7 +72,7 @@ def yes_no(flag):
 def sidebar_footer():
     st.markdown("---")
     html("<div style='color:#666666;font-size:0.78rem;'>"
-         "Tugas Besar PCD - Puzzle World<br>Versi Tanpa Library<br><br>"
+         "Tugas Besar PCD - Puzzle World<br>Versi NumPy<br><br>"
          "Ameta Noveolyn (103012300240)<br>"
          "Muhammad Ghozy Abdurrahman (103012330264)<br>"
          "Syahdan Rizqi Ruhendy (103012330308)</div>")
@@ -127,8 +127,7 @@ def generator_page():
     col_img, col_btn = st.columns([3, 1])
     with col_img:
         section("Gambar Original")
-        st.image(to_png_bytes(image["px"], w, h, "L" if image["gray"] else "RGB"),
-                 use_container_width=True)
+        st.image(to_png_bytes(image["px"]), use_container_width=True)
     with col_btn:
         section("Aksi")
         generate_btn = st.button("Generate Puzzle", use_container_width=True)
@@ -284,9 +283,12 @@ def solver_page():
 
 with st.sidebar:
     st.markdown("## Puzzle World")
-    page = st.radio("Modul", ["Puzzle Generator", "Puzzle Solver"], label_visibility="collapsed")
+    page = st.radio("Modul", ["Puzzle Generator", "Puzzle Solver", "Susun Manual"],
+                    label_visibility="collapsed")
 
 if page == "Puzzle Generator":
     generator_page()
-else:
+elif page == "Puzzle Solver":
     solver_page()
+else:
+    manual_page(header, section, empty_state, sidebar_footer)

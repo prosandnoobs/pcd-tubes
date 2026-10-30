@@ -7,7 +7,7 @@
 
 Sistem berbasis citra digital untuk pemrosesan teka-teki gambar yang terdiri dari dua modul utama: **Puzzle Generator** (pemotong gambar menjadi kepingan teka-teki) dan **Puzzle Solver** (penyusun kembali kepingan teka-teki menjadi gambar utuh).
 
-> **Catatan Implementasi:** Seluruh algoritma pengolahan citra digital diimplementasikan secara mandiri menggunakan **Python murni (pure Python)** tanpa memanfaatkan library pengolahan citra numerik/matriks seperti NumPy atau OpenCV. Pustaka `Pillow` (PIL) hanya digunakan untuk proses I/O membaca (*decode*) dan menulis (*encode*) file gambar.
+> **Catatan Implementasi:** Seluruh algoritma pengolahan citra digital diimplementasikan secara mandiri menggunakan operasi array **NumPy**, tanpa library pengolahan citra siap pakai seperti OpenCV. Pustaka `Pillow` (PIL) hanya digunakan untuk proses I/O membaca (*decode*) dan menulis (*encode*) file gambar.
 
 ---
 
@@ -40,8 +40,8 @@ Sistem berbasis citra digital untuk pemrosesan teka-teki gambar yang terdiri dar
 
 ```text
 ├── app.py              # Antarmuka web utama berbasis Streamlit
-├── generator.py        # Logika pemotongan citra dan pembuatan bingkai (Python murni)
-├── solver.py           # Logika rekonstruksi citra dan pencocokan potongan (Python murni)
+├── generator.py        # Logika pemotongan citra dan pembuatan bingkai (NumPy)
+├── solver.py           # Logika rekonstruksi citra dan pencocokan potongan, serta fitur susun manual (NumPy)
 ├── requirements.txt    # Daftar dependensi aplikasi
 ├── style.css           # Kustomisasi styling tema UI Streamlit
 └── README.md           # Dokumentasi proyek
