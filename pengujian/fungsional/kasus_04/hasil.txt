@@ -1,0 +1,3 @@
+Kasus 4: Solver, masukan ZIP, M=4, semua fitur aktif
+Hasil pengamatan: M terdeteksi 4, akurasi posisi 100.0%, akurasi rotasi 100.0%, rotasi global 180 derajat
+Status: Lulus

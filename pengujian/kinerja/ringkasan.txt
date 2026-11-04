@@ -1,0 +1,35 @@
+Jumlah pengujian: 210
+Tersusun sempurna: 180 dari 210 (85,7%)
+M terdeteksi benar: 210 dari 210
+Waktu solver terlama: 5.15 detik (pohon, M=10, Rotasi, seed 22)
+
+Tersusun sempurna per konfigurasi:
+  Polos        39 dari 42 (92,9%)
+  Jigsaw       41 dari 42 (97,6%)
+  Rotasi       39 dari 42 (92,9%)
+  Augmentasi   29 dari 42 (69,0%)
+  Semua        32 dari 42 (76,2%)
+
+Rata-rata akurasi tetangga (%):
+                  M=2     M=3     M=4     M=5     M=6     M=8    M=10
+  Polos         100,0   100,0   100,0   100,0   100,0   100,0    98,6
+  Jigsaw        100,0   100,0   100,0   100,0   100,0   100,0    99,3
+  Rotasi        100,0   100,0   100,0   100,0   100,0   100,0    86,7
+  Augmentasi    100,0   100,0   100,0   100,0    90,3    90,9    69,6
+  Semua         100,0   100,0   100,0   100,0    96,9    95,8    77,1
+
+Rata-rata akurasi posisi (%):
+                  M=2     M=3     M=4     M=5     M=6     M=8    M=10
+  Polos         100,0   100,0   100,0   100,0   100,0   100,0    98,5
+  Jigsaw        100,0   100,0   100,0   100,0   100,0   100,0    99,7
+  Rotasi        100,0   100,0   100,0   100,0   100,0   100,0    50,0
+  Augmentasi    100,0   100,0   100,0   100,0    78,2    92,2    47,0
+  Semua         100,0   100,0   100,0   100,0    97,7    96,1    78,2
+
+Rata-rata waktu solver (detik):
+                  M=2     M=3     M=4     M=5     M=6     M=8    M=10
+  Polos          0,06    0,07    0,08    0,13    0,22    0,61    1,54
+  Jigsaw         0,06    0,07    0,08    0,12    0,23    0,66    1,82
+  Rotasi         0,07    0,09    0,15    0,29    0,56    1,93    4,36
+  Augmentasi     0,06    0,07    0,08    0,13    0,23    0,65    1,55
+  Semua          0,07    0,07    0,10    0,20    0,39    1,38    2,58

@@ -1,0 +1,3 @@
+Kasus 12: Susun Manual, melepas dan menukar dua potongan
+Hasil pengamatan: Potongan dilepas menjadi potongan terpilih: True; dua potongan tertukar: True; setelah ditukar akurasi posisi 77.8%
+Status: Lulus

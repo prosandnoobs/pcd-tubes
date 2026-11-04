@@ -1,0 +1,3 @@
+Kasus 10: Susun Manual, memulai permainan M=3
+Hasil pengamatan: M=3, grid kosong=True, tray berisi 9 potongan
+Status: Lulus

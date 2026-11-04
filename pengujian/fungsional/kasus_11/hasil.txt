@@ -1,0 +1,3 @@
+Kasus 11: Susun Manual, seluruh potongan dipasang benar
+Hasil pengamatan: Tray berisi 0 potongan, akurasi posisi 100.0%, akurasi rotasi 100.0%
+Status: Lulus

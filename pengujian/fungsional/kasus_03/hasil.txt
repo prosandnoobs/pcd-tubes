@@ -1,0 +1,3 @@
+Kasus 3: Generator, fitur nomor potongan
+Hasil pengamatan: 9 dari 9 file potongan bernomor berbeda dari potongan tanpa nomor
+Status: Lulus

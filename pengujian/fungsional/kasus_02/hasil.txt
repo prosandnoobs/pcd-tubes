@@ -1,0 +1,3 @@
+Kasus 2: Generator dan solver, citra grayscale, M=3, jigsaw
+Hasil pengamatan: Mode potongan LA, mode hasil L, akurasi posisi 100.0%
+Status: Lulus

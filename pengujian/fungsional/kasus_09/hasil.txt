@@ -1,0 +1,3 @@
+Kasus 9: Solver, tombol putar hasil 90 derajat
+Hasil pengamatan: 600 x 450 menjadi 450 x 600
+Status: Lulus

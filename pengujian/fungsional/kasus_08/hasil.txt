@@ -1,0 +1,3 @@
+Kasus 8: Solver, hanya bingkai tanpa potongan
+Hasil pengamatan: Bingkai terbaca, potongan terbaca 0. Pada aplikasi, kondisi ini menampilkan pesan 'Input belum lengkap: dibutuhkan 1 citra bingkai dan minimal 1 potongan.'
+Status: Lulus
