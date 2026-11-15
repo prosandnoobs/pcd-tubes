@@ -1,0 +1,3 @@
+Kasus 6: Solver, file bingkai tidak bernama Bingkai
+Hasil pengamatan: Bingkai dikenali: acuan.png, potongan terbaca: 16
+Status: Lulus

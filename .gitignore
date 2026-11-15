@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+output/
+
+# Foto uji lokal
+image/
+
+.streamlit/

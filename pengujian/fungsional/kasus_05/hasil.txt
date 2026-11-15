@@ -1,0 +1,3 @@
+Kasus 5: Solver, masukan file terpisah tanpa answer.json
+Hasil pengamatan: answer.json tidak ada (True), M terdeteksi 4, hasil berukuran 600 x 450
+Status: Lulus

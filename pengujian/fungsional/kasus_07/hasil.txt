@@ -1,0 +1,3 @@
+Kasus 7: Solver, 15 potongan (bukan kuadrat)
+Hasil pengamatan: Pesan kesalahan: Jumlah potongan (15) bukan bilangan kuadrat dan grid bingkai tidak terdeteksi.
+Status: Lulus

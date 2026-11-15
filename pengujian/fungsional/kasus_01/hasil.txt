@@ -1,0 +1,3 @@
+Kasus 1: Generator, citra RGB, M=4, semua fitur aktif
+Hasil pengamatan: Isi ZIP: Bingkai.png=True, potongan=16, answer.json=True; ukuran bingkai 600 x 450
+Status: Lulus
